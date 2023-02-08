@@ -23,6 +23,7 @@ import timer_event;
 
 struct SimConfig {
     ushort      port                    = 15657;
+    ushort      autoport                = 15658;
     
     int         numFloors               = 4;
     
@@ -65,6 +66,7 @@ SimConfig parseConfig(string[] contents, SimConfig old = SimConfig.init){
     getopt( contents,
         std.getopt.config.passThrough,
         "port",                         &cfg.port,
+        "autoport"                      &cfg.autoport,
         "numFloors",                    &cfg.numFloors,
         "travelTimeBetweenFloors_ms",   &travelTimeBetweenFloors_ms,
         "travelTimePassingFloor_ms",    &travelTimePassingFloor_ms,
@@ -717,6 +719,60 @@ void stdinGetterProc(Tid receiver){
     }
 }
 
+/*
+void stdinParseProc(Tid receiver){
+    try {
+    while(true){
+        receive(
+            (StdinChar c){
+                foreach(btnType, keys; cfg.key_orderButtons){
+                    int floor = keys.countUntil(c.toLower).to!int;
+                    if( (floor != -1) &&
+                        !(btnType == BtnType.Up && c == keys[$-1]) &&
+                        !(btnType == BtnType.Down && c == keys[0])
+                    ){
+                        if(c.isUpper){
+                            receiver.send(OrderButton(floor, cast(BtnType)btnType, BtnAction.Toggle));
+                        } else {
+                            receiver.send(OrderButton(floor, cast(BtnType)btnType, BtnAction.Press));
+                            addEvent(receiver, cfg.btnDepressedTime, OrderButton(floor, cast(BtnType)btnType, BtnAction.Release));
+                        }
+                    }
+                }
+
+                if(c.toLower == cfg.key_stopButton){
+                    if(c.isUpper){
+                        receiver.send(StopButton(BtnAction.Toggle));
+                    } else {
+                        receiver.send(StopButton(BtnAction.Press));
+                        addEvent(receiver, cfg.btnDepressedTime, StopButton(BtnAction.Release));
+                    }
+                }
+
+                if(c == cfg.key_obstruction){
+                    receiver.send(ObstructionSwitch());
+                }
+
+                if(c == cfg.key_moveUp){
+                    receiver.send(MotorDirection(Dirn.Up));
+                }
+                if(c == cfg.key_moveStop){
+                    receiver.send(MotorDirection(Dirn.Stop));
+                }
+                if(c == cfg.key_moveDown){
+                    receiver.send(MotorDirection(Dirn.Down));
+                }
+                if(c == cfg.key_moveInbounds){
+                    receiver.send(ManualMoveWithinBounds());
+                }
+            }
+        );
+    }
+    } catch(Throwable t){
+        writeln(typeid(t).name, "@", t.file, "(", t.line, "): ", t.msg);
+    }
+}
+*/
 
 void stdinParseProc(Tid receiver){
     try {
@@ -770,7 +826,6 @@ void stdinParseProc(Tid receiver){
         writeln(typeid(t).name, "@", t.file, "(", t.line, "): ", t.msg);
     }
 }
-
 
 void networkInterfaceProc(Tid receiver){
     try {
