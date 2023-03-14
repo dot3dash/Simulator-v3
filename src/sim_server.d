@@ -15,7 +15,7 @@ import  std.algorithm,
 
 import timer_event;
 
-
+// source ~/dlang/dmd-2.102.2/activate
 
 ///----------------------///
 /// -----  CONFIG  ----- ///
@@ -66,7 +66,7 @@ SimConfig parseConfig(string[] contents, SimConfig old = SimConfig.init){
     getopt( contents,
         std.getopt.config.passThrough,
         "port",                         &cfg.port,
-        "autoport"                      &cfg.autoport,
+        "autoport",                     &cfg.autoport,
         "numFloors",                    &cfg.numFloors,
         "travelTimeBetweenFloors_ms",   &travelTimeBetweenFloors_ms,
         "travelTimePassingFloor_ms",    &travelTimePassingFloor_ms,
@@ -214,6 +214,10 @@ struct ClientConnected {
     alias value this;
 }
 
+struct FatActive {
+    bool value;
+    alias value this;
+}
 
 
 ///---------------------///
@@ -285,6 +289,7 @@ final class SimulationState {
 
     char[][]    bg;
     bool        clientConnected;
+    bool        fatActive;
     int         printCount;
 
     invariant {
@@ -364,6 +369,11 @@ final class SimulationState {
         if(currDirn == Dirn.Down){
             bg[1][elevatorPos-1] = '<';
         }
+
+        auto fa = fatActive ? 
+            "FAT active  " : 
+            "FAT inactive" ;
+        bg[1][$-12..$-12+fa.length] = fa[0..$];
 
         auto cc = clientConnected ? 
             "Connected   " : 
@@ -662,6 +672,10 @@ void main(string[] args){
                     thisTid.send(MotorDirection(Dirn.Stop));
                 }
             },
+            (FatActive fa){
+                state.fatActive = fa;
+                // TODO: Restart the elevator?
+            },
             
 
             /// --- OTHER --- ///
@@ -774,11 +788,92 @@ void stdinParseProc(Tid receiver){
 }
 */
 
+// TODO: Gjøre så den svarer etasje, lys,...
 void stdinParseProc(Tid receiver){
     try {
+
+    Socket acceptSock = new TcpSocket();
+
+    acceptSock.setOption(SocketOptionLevel.SOCKET, SocketOption.REUSEADDR, 1);
+    acceptSock.bind(new InternetAddress(cfg.autoport.to!ushort));
+    acceptSock.listen(1);
+
+    ubyte[4] buf;
+
     while(true){
-        receive(
-            (StdinChar c){
+        auto sock = acceptSock.accept();
+        receiver.send(FatActive(true));
+
+
+        while(sock.isAlive){
+            buf = 0;
+            auto n = sock.receive(buf);
+
+            // New line
+            StdinChar c = buf[0].to!StdinChar;
+            StdinChar isCommand = buf[1].to!StdinChar;
+
+            if(n <= 0){
+                receiver.send(FatActive(false));
+                sock.shutdown(SocketShutdown.BOTH);
+                sock.close();
+            } else if(isCommand.toLower == 'c') {
+                switch(buf[0]){
+                case 0:
+                    receiver.send(ReloadConfig());
+                    break;
+                case 1:
+                    receiver.send(MotorDirection(
+                        (buf[1] == 0)   ? Dirn.Stop :
+                        (buf[1] < 128)  ? Dirn.Up   :
+                                          Dirn.Down
+                    ));
+                    break;
+                case 2:
+                    receiver.send(OrderButtonLight(buf[2].to!int, cast(BtnType)buf[1], buf[3].to!bool));
+                    break;
+                case 3:
+                    receiver.send(FloorIndicator(buf[1].to!int));
+                    break;
+                case 4:
+                    receiver.send(DoorLight(buf[1].to!bool));
+                    break;
+                case 5:
+                    receiver.send(StopButtonLight(buf[1].to!bool));
+                    break;
+
+                case 6:
+                    receiver.send(thisTid, OrderButtonRequest(buf[2].to!int, cast(BtnType)buf[1]));
+                    receive((bool v){
+                        buf[1..$] = [v.to!ubyte, 0, 0];
+                        sock.send(buf);
+                    });
+                    break;
+                case 7:
+                    receiver.send(thisTid, FloorSensorRequest());
+                    receive((int f){
+                        buf[1..$] = (f == -1) ? [0, 0, 0] : [1, cast(ubyte)f, 0];
+                        sock.send(buf);
+                    });
+                    break;
+                case 8:
+                    receiver.send(thisTid, StopButtonRequest());
+                    receive((bool v){
+                        buf[1..$] = [v.to!ubyte, 0, 0];
+                        sock.send(buf);
+                    });
+                    break;
+                case 9:
+                    receiver.send(thisTid, ObstructionRequest());
+                    receive((bool v){
+                        buf[1..$] = [v.to!ubyte, 0, 0];
+                        sock.send(buf);
+                    });
+                    break;
+                default:
+                    break;
+                }
+            } else {
                 foreach(btnType, keys; cfg.key_orderButtons){
                     int floor = keys.countUntil(c.toLower).to!int;
                     if( (floor != -1) &&
@@ -820,8 +915,9 @@ void stdinParseProc(Tid receiver){
                     receiver.send(ManualMoveWithinBounds());
                 }
             }
-        );
+        }  
     }
+
     } catch(Throwable t){
         writeln(typeid(t).name, "@", t.file, "(", t.line, "): ", t.msg);
     }
